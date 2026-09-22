@@ -18,13 +18,9 @@
 
 use authenticate::store::CredentialStore;
 use authenticate::{AuthenticateError, Authenticator, Presented};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use context::Verified;
+use identify::authorization::{self, BASIC_CREDENTIAL};
 use xcore::{Mechanism, mechanism};
-
-/// The proof name this verifier reads off a `Presented`.
-pub const PROOF: &str = "basic.credential";
 
 /// Verifies a `username` claim with a `basic.credential` proof.
 pub struct BasicAuthenticator {
@@ -42,28 +38,6 @@ impl BasicAuthenticator {
     pub fn store(&self) -> &CredentialStore {
         &self.store
     }
-}
-
-/// The user-id and password inside a Basic credential — the base64 text,
-/// with or without the `Basic ` it followed.
-///
-/// # Errors
-///
-/// Not base64, not UTF-8, or no colon between the two halves.
-pub fn decode(credential: &str) -> Result<(String, String), AuthenticateError> {
-    let text = credential
-        .strip_prefix("Basic ")
-        .unwrap_or(credential)
-        .trim();
-    let bytes = STANDARD
-        .decode(text)
-        .map_err(|_| AuthenticateError::new("the Basic credential is not base64"))?;
-    let pair = String::from_utf8(bytes)
-        .map_err(|_| AuthenticateError::new("the Basic credential is not UTF-8"))?;
-    let (user, password) = pair.split_once(':').ok_or_else(|| {
-        AuthenticateError::new("the Basic credential has no colon between user-id and password")
-    })?;
-    Ok((user.to_string(), password.to_string()))
 }
 
 /// Whether a claim is one this verifier reads: a bare `username`, or one
@@ -85,13 +59,14 @@ impl Authenticator for BasicAuthenticator {
                 presented.mechanism.name()
             )));
         }
-        let credential = presented.proof(PROOF).ok_or_else(|| {
+        let credential = presented.proof(BASIC_CREDENTIAL).ok_or_else(|| {
             AuthenticateError::new(format!(
-                "no '{PROOF}' proof was presented with the username '{}'",
+                "no '{BASIC_CREDENTIAL}' proof was presented with the username '{}'",
                 presented.value
             ))
         })?;
-        let (user, password) = decode(credential)?;
+        let credential = authorization::under(credential, "basic").unwrap_or(credential);
+        let (user, password) = authorization::basic(credential)?;
         if user != presented.value {
             return Err(AuthenticateError::new(format!(
                 "the claim names '{}' and the Basic credential names '{user}'",
@@ -112,6 +87,8 @@ impl Authenticator for BasicAuthenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
 
     fn verifier() -> BasicAuthenticator {
         BasicAuthenticator::new(CredentialStore::from_entries(
@@ -121,21 +98,22 @@ mod tests {
     }
 
     fn claim(username: &str, pair: &str) -> Presented {
-        Presented::passed(mechanism::username(), username).with_proof(PROOF, STANDARD.encode(pair))
+        Presented::passed(mechanism::username(), username)
+            .with_proof(BASIC_CREDENTIAL, STANDARD.encode(pair))
     }
 
     #[test]
     fn the_rfc_7617_credential_proves_aladdin() {
         // RFC 7617 section 2: Aladdin, open sesame.
         let presented = Presented::passed(mechanism::username(), "Aladdin")
-            .with_proof(PROOF, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+            .with_proof(BASIC_CREDENTIAL, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
         assert_eq!(
             verifier().verify(&presented).expect("verified"),
             Verified::Proven
         );
         // With the scheme word still in front, the same.
         let prefixed = Presented::passed(mechanism::basic(), "Aladdin")
-            .with_proof(PROOF, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+            .with_proof(BASIC_CREDENTIAL, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
         assert_eq!(
             verifier().verify(&prefixed).expect("verified"),
             Verified::Proven
@@ -151,17 +129,13 @@ mod tests {
                 .expect("verified"),
             Verified::Refused
         );
-        // Only the first colon divides; the rest is password.
-        assert_eq!(
-            decode(&STANDARD.encode("alice:a:b")).expect("decoded").1,
-            "a:b"
-        );
     }
 
     #[test]
     fn a_credential_that_is_not_base64_or_has_no_colon_is_refused_by_reason() {
         let verifier = verifier();
-        let garbage = Presented::passed(mechanism::username(), "alice").with_proof(PROOF, "!!");
+        let garbage =
+            Presented::passed(mechanism::username(), "alice").with_proof(BASIC_CREDENTIAL, "!!");
         assert!(
             verifier
                 .verify(&garbage)
@@ -170,7 +144,7 @@ mod tests {
                 .contains("not base64")
         );
         let bare = Presented::passed(mechanism::username(), "alice")
-            .with_proof(PROOF, STANDARD.encode("alice"));
+            .with_proof(BASIC_CREDENTIAL, STANDARD.encode("alice"));
         assert!(
             verifier
                 .verify(&bare)
