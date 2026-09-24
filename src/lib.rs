@@ -19,7 +19,8 @@
 use authenticate::store::CredentialStore;
 use authenticate::{AuthenticateError, Authenticator, Presented};
 use context::Verified;
-use identify::authorization::{self, BASIC_CREDENTIAL};
+use identify::authorization;
+use identify::evidence::{self, BASIC_CREDENTIAL};
 use xcore::{Mechanism, mechanism};
 
 /// Verifies a `username` claim with a `basic.credential` proof.
@@ -59,7 +60,7 @@ impl Authenticator for BasicAuthenticator {
                 presented.mechanism.name()
             )));
         }
-        let credential = presented.proof(BASIC_CREDENTIAL).ok_or_else(|| {
+        let credential = presented.proof(evidence::BASIC_CREDENTIAL).ok_or_else(|| {
             AuthenticateError::new(format!(
                 "no '{BASIC_CREDENTIAL}' proof was presented with the username '{}'",
                 presented.value
@@ -87,8 +88,6 @@ impl Authenticator for BasicAuthenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD;
 
     fn verifier() -> BasicAuthenticator {
         BasicAuthenticator::new(CredentialStore::from_entries(
@@ -98,22 +97,26 @@ mod tests {
     }
 
     fn claim(username: &str, pair: &str) -> Presented {
-        Presented::passed(mechanism::username(), username)
-            .with_proof(BASIC_CREDENTIAL, STANDARD.encode(pair))
+        Presented::passed(mechanism::username(), username).with_proof(
+            evidence::BASIC_CREDENTIAL,
+            codec::base64::encode(pair.as_bytes()),
+        )
     }
 
     #[test]
     fn the_rfc_7617_credential_proves_aladdin() {
         // RFC 7617 section 2: Aladdin, open sesame.
         let presented = Presented::passed(mechanism::username(), "Aladdin")
-            .with_proof(BASIC_CREDENTIAL, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+            .with_proof(evidence::BASIC_CREDENTIAL, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
         assert_eq!(
             verifier().verify(&presented).expect("verified"),
             Verified::Proven
         );
         // With the scheme word still in front, the same.
-        let prefixed = Presented::passed(mechanism::basic(), "Aladdin")
-            .with_proof(BASIC_CREDENTIAL, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+        let prefixed = Presented::passed(mechanism::basic(), "Aladdin").with_proof(
+            evidence::BASIC_CREDENTIAL,
+            "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+        );
         assert_eq!(
             verifier().verify(&prefixed).expect("verified"),
             Verified::Proven
@@ -134,8 +137,8 @@ mod tests {
     #[test]
     fn a_credential_that_is_not_base64_or_has_no_colon_is_refused_by_reason() {
         let verifier = verifier();
-        let garbage =
-            Presented::passed(mechanism::username(), "alice").with_proof(BASIC_CREDENTIAL, "!!");
+        let garbage = Presented::passed(mechanism::username(), "alice")
+            .with_proof(evidence::BASIC_CREDENTIAL, "!!");
         assert!(
             verifier
                 .verify(&garbage)
@@ -143,8 +146,10 @@ mod tests {
                 .message
                 .contains("not base64")
         );
-        let bare = Presented::passed(mechanism::username(), "alice")
-            .with_proof(BASIC_CREDENTIAL, STANDARD.encode("alice"));
+        let bare = Presented::passed(mechanism::username(), "alice").with_proof(
+            evidence::BASIC_CREDENTIAL,
+            codec::base64::encode("alice".as_bytes()),
+        );
         assert!(
             verifier
                 .verify(&bare)
