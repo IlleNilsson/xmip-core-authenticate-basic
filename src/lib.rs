@@ -17,8 +17,9 @@
 //! is refused as such rather than compared byte by byte.
 
 use authenticate::store::CredentialStore;
-use authenticate::{AuthenticateError, Authenticator, Presented};
+use authenticate::{AuthenticateError, Authenticator};
 use context::Verified;
+use identify::Presented;
 use identify::authorization;
 use identify::evidence::{self, BASIC_CREDENTIAL};
 use xcore::{Mechanism, mechanism};
