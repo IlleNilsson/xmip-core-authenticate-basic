@@ -42,25 +42,13 @@ impl BasicAuthenticator {
     }
 }
 
-/// Whether a claim is one this verifier reads: a bare `username`, or one
-/// the first gate already filed under `basic`.
-fn reads(mechanism: &Mechanism) -> bool {
-    let name = mechanism.name();
-    name == "username" || name == "basic"
-}
-
 impl Authenticator for BasicAuthenticator {
     fn mechanism(&self) -> Mechanism {
         mechanism::basic()
     }
 
     fn verify(&self, presented: &Presented) -> Result<Verified, AuthenticateError> {
-        if !reads(&presented.mechanism) {
-            return Err(AuthenticateError::new(format!(
-                "'{}' is not a claim the Basic verifier reads: it takes a username",
-                presented.mechanism.name()
-            )));
-        }
+        authenticate::account::user_claim(presented, &self.mechanism())?;
         let credential = presented.proof(evidence::BASIC_CREDENTIAL).ok_or_else(|| {
             AuthenticateError::new(format!(
                 "no '{BASIC_CREDENTIAL}' proof was presented with the username '{}'",
