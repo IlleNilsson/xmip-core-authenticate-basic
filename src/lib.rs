@@ -35,7 +35,7 @@ impl BasicAuthenticator {
         Self { store }
     }
 
-    /// The enrolments this verifies against.
+    /// The enrollments this verifies against.
     #[must_use]
     pub fn store(&self) -> &CredentialStore {
         &self.store
